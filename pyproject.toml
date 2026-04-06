@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "prowpt-mcp-server"
+version = "0.1.0"
+description = "MCP server for Prowpt.ai — lets AI agents create, edit, and publish web apps"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Prowpt.ai", email = "support@prowpt.ai" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.urls]
+Homepage = "https://prowpt.ai"
+Documentation = "https://prowpt.ai/docs"
+Repository = "https://github.com/prowptai/prowpt-mcp-server"
+
+[project.scripts]
+prowpt-mcp = "prowpt_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/prowpt_mcp"]

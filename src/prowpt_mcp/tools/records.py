@@ -13,6 +13,7 @@ async def list_record_types(client: ProwptClient, project_id: int) -> str:
 
 async def create_record_type(client: ProwptClient, project_id: int,
                                name: str, slug: str, fields: list[dict],
+                               user_scope: str | None = None,
                                is_user_profile: bool = False,
                                description: str | None = None,
                                display_name_field: str | None = None,
@@ -22,9 +23,13 @@ async def create_record_type(client: ProwptClient, project_id: int,
         "name": name,
         "slug": slug,
         "fields": fields,
-        "is_user_profile": is_user_profile,
         "show_in_backoffice": show_in_backoffice,
     }
+    if user_scope:
+        payload["user_scope"] = user_scope
+        payload["is_user_profile"] = user_scope in ("profile", "collection")
+    else:
+        payload["is_user_profile"] = is_user_profile
     if description:
         payload["description"] = description
     if display_name_field:

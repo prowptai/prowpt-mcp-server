@@ -18,7 +18,7 @@ from mcp.types import Tool, TextContent, Resource
 
 from prowpt_mcp.config import get_api_key, get_api_url
 from prowpt_mcp.client import ProwptClient
-from prowpt_mcp.tools import projects, sources, assistant, records, workflows, publishing, billing, assets, translations, email_templates, payments
+from prowpt_mcp.tools import projects, sources, assistant, records, workflows, publishing, billing, assets, translations, email_templates, payments, packages
 
 server = Server("prowpt")
 
@@ -63,8 +63,8 @@ TOOLS: list[Tool] = [
 
     # --- Record types and records ---
     Tool(name="list_record_types", description="List all record types for a project", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}}, "required": ["project_id"]}),
-    Tool(name="create_record_type", description="Create a new record type with field definitions. Set is_user_profile=true for per-user data (scopes records to logged-in user). Use select/multiselect fields with options array for fixed value sets.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "name": {"type": "string"}, "slug": {"type": "string"}, "fields": {"type": "array", "items": {"type": "object"}}, "is_user_profile": {"type": "boolean", "description": "True to scope records to logged-in user (user profile extension)"}, "description": {"type": "string"}, "display_name_field": {"type": "string", "description": "Field name used as label in lists"}, "show_in_backoffice": {"type": "boolean", "description": "Show in backoffice UI (default true)"}}, "required": ["project_id", "name", "slug", "fields"]}),
-    Tool(name="update_record_type", description="Update a record type's name, slug, fields, or other settings", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "record_type_id": {"type": "integer"}, "name": {"type": "string"}, "slug": {"type": "string"}, "fields": {"type": "array", "items": {"type": "object"}}}, "required": ["project_id", "record_type_id"]}),
+    Tool(name="create_record_type", description="Create a new record type with field definitions. Use user_scope='profile' for one-per-user data (upsert via /me/profile-records/) or user_scope='collection' for many-per-user data (standard CRUD with Bearer). Use select/multiselect fields with options array for fixed value sets.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "name": {"type": "string"}, "slug": {"type": "string"}, "fields": {"type": "array", "items": {"type": "object"}}, "user_scope": {"type": "string", "enum": ["profile", "collection"], "description": "User scoping: 'profile' = one record per user (upsert), 'collection' = many records per user (CRUD). Omit for global/shared record types."}, "is_user_profile": {"type": "boolean", "description": "Deprecated — use user_scope instead. True is equivalent to user_scope='profile'."}, "description": {"type": "string"}, "display_name_field": {"type": "string", "description": "Field name used as label in lists"}, "show_in_backoffice": {"type": "boolean", "description": "Show in backoffice UI (default true)"}}, "required": ["project_id", "name", "slug", "fields"]}),
+    Tool(name="update_record_type", description="Update a record type's name, slug, fields, or other settings", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "record_type_id": {"type": "integer"}, "name": {"type": "string"}, "slug": {"type": "string"}, "fields": {"type": "array", "items": {"type": "object"}}, "user_scope": {"type": "string", "enum": ["profile", "collection"], "description": "User scoping: 'profile' = one per user, 'collection' = many per user. Set to null to remove user scoping."}, "is_user_profile": {"type": "boolean"}, "description": {"type": "string"}, "display_name_field": {"type": "string"}, "show_in_backoffice": {"type": "boolean"}}, "required": ["project_id", "record_type_id"]}),
     Tool(name="list_records", description="List records of a specific type", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "record_type_slug": {"type": "string"}}, "required": ["project_id", "record_type_slug"]}),
     Tool(name="create_record", description="Create a new record", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "record_type_slug": {"type": "string"}, "fields": {"type": "object"}}, "required": ["project_id", "record_type_slug", "fields"]}),
     Tool(name="update_record", description="Update an existing record", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "record_type_slug": {"type": "string"}, "record_id": {"type": "integer"}, "fields": {"type": "object"}}, "required": ["project_id", "record_type_slug", "record_id", "fields"]}),
@@ -102,8 +102,14 @@ TOOLS: list[Tool] = [
     Tool(name="seed_email_templates", description="Seed default email templates for a project (inserts factory defaults, skips existing slugs)", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}}, "required": ["project_id"]}),
     Tool(name="reset_system_templates", description="Reset all system email templates to their factory defaults (overwrites customisations)", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}}, "required": ["project_id"]}),
 
+    # --- Packages / Dependencies ---
+    Tool(name="list_catalog", description="List all npm packages available in the platform catalog (not project-specific)", inputSchema={"type": "object", "properties": {}, "required": []}),
+    Tool(name="list_project_packages", description="List npm packages enabled for a project, with version info and update availability", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}}, "required": ["project_id"]}),
+    Tool(name="add_package", description="Add a catalog package to a project's dependencies. The package must exist in the platform catalog.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "package_name": {"type": "string", "description": "Package name from the catalog (e.g. 'recharts', 'zustand')"}}, "required": ["project_id", "package_name"]}),
+    Tool(name="remove_package", description="Remove a package from a project's dependencies. Core packages (react, react-dom, etc.) cannot be removed.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "package_name": {"type": "string"}}, "required": ["project_id", "package_name"]}),
+
     # --- Project context (for writing code) ---
-    Tool(name="get_project_context", description="IMPORTANT: Call this BEFORE writing code for a project. Returns full conventions, patterns, record types, templates, and rules that the generated code MUST follow.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer", "description": "Project ID"}, "include_sources": {"type": "boolean", "description": "Include full source file contents (can be large)", "default": False}}, "required": ["project_id"]}),
+    Tool(name="get_project_context", description="IMPORTANT: Call this BEFORE writing code for a project. Returns full conventions, patterns, record types, templates, packages, and rules that the generated code MUST follow.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer", "description": "Project ID"}, "include_sources": {"type": "boolean", "description": "Include full source file contents (can be large)", "default": False}}, "required": ["project_id"]}),
 
     # --- Billing ---
     Tool(name="get_usage", description="Get current usage (credits, projects, workflows, domains)", inputSchema={"type": "object", "properties": {}, "required": []}),
@@ -147,7 +153,7 @@ _DISPATCH: dict[str, Any] = {
     "get_assistant_status": lambda c, a: assistant.get_assistant_status(c, a["project_id"]),
     # Records
     "list_record_types": lambda c, a: records.list_record_types(c, a["project_id"]),
-    "create_record_type": lambda c, a: records.create_record_type(c, a["project_id"], a["name"], a["slug"], a["fields"], is_user_profile=a.get("is_user_profile", False), description=a.get("description"), display_name_field=a.get("display_name_field"), show_in_backoffice=a.get("show_in_backoffice", True)),
+    "create_record_type": lambda c, a: records.create_record_type(c, a["project_id"], a["name"], a["slug"], a["fields"], user_scope=a.get("user_scope"), is_user_profile=a.get("is_user_profile", False), description=a.get("description"), display_name_field=a.get("display_name_field"), show_in_backoffice=a.get("show_in_backoffice", True)),
     "update_record_type": lambda c, a: records.update_record_type(c, a.pop("project_id"), a.pop("record_type_id"), **a),
     "list_records": lambda c, a: records.list_records(c, a["project_id"], a["record_type_slug"]),
     "create_record": lambda c, a: records.create_record(c, a["project_id"], a["record_type_slug"], a["fields"]),
@@ -180,6 +186,11 @@ _DISPATCH: dict[str, Any] = {
     "send_test_email": lambda c, a: email_templates.send_test_email(c, a["project_id"], a["slug"], a["to_email"], a.get("context")),
     "seed_email_templates": lambda c, a: email_templates.seed_email_templates(c, a["project_id"]),
     "reset_system_templates": lambda c, a: email_templates.reset_system_templates(c, a["project_id"]),
+    # Packages
+    "list_catalog": lambda c, a: packages.list_catalog(c),
+    "list_project_packages": lambda c, a: packages.list_project_packages(c, a["project_id"]),
+    "add_package": lambda c, a: packages.add_package(c, a["project_id"], a["package_name"]),
+    "remove_package": lambda c, a: packages.remove_package(c, a["project_id"], a["package_name"]),
     # Billing
     "get_usage": lambda c, a: billing.get_usage(c),
     "get_credits": lambda c, a: billing.get_credits(c),
@@ -311,8 +322,15 @@ _QUICKSTART_DOC = """\
 
 ### Manage data
 1. create_record_type(project_id=X, name="Products", slug="products", fields=[...])
-2. create_record_type(project_id=X, name="User Prefs", slug="user-prefs", fields=[...], is_user_profile=True)
-3. create_record(project_id=X, record_type_slug="products", fields={...})
+2. create_record_type(project_id=X, name="User Prefs", slug="user-prefs", fields=[...], user_scope="profile")
+3. create_record_type(project_id=X, name="Tracking Entries", slug="tracking-entries", fields=[...], user_scope="collection")
+4. create_record(project_id=X, record_type_slug="products", fields={...})
+
+### Manage dependencies
+1. list_catalog()  → see all available npm packages
+2. list_project_packages(project_id=X)  → see what's enabled
+3. add_package(project_id=X, package_name="recharts")  → enable a package
+4. remove_package(project_id=X, package_name="recharts")  → disable
 
 ### Workflows
 1. create_workflow(project_id=X, name="Welcome Email", definition={...})
@@ -336,8 +354,13 @@ This document covers platform-wide conventions.
 1. **Do NOT add any router provider** (BrowserRouter, MemoryRouter, HashRouter).
    The Prowpt build system wraps the app in a HashRouter automatically.
 2. Keep exactly **one `export default`** in the entry point file (usually App.tsx).
-3. Do NOT import packages not available in the Prowpt runtime.
-   Available: react, react-dom, react-router-dom, tailwindcss, dompurify.
+3. **Only import npm packages enabled for the project.** The build will fail for
+   unknown imports. Call `list_project_packages` to see what's available, or
+   `get_project_context` which includes the package list.
+   Core packages (always available): react, react-dom, react-router-dom, dompurify.
+   Additional packages from the platform catalog (date-fns, lucide-react, recharts,
+   zustand, zod, framer-motion, sonner, etc.) can be enabled per-project via
+   `add_package` or Project Settings → Dependencies.
 
 ## window.__PROJECT_CONFIG__
 Every published Prowpt app has `window.__PROJECT_CONFIG__` injected at runtime:
@@ -373,8 +396,10 @@ DELETE {base}/records/{slug}/{id}
 - For richtext fields: sanitize with DOMPurify before dangerouslySetInnerHTML.
 - For asset fields: the API rewrites paths so `<img src={item.data.image} />` works.
 
-### User Profile Records (is_user_profile: true)
-When a record type has `is_user_profile: true`, records are scoped to the logged-in user:
+### User-Scoped Records (user_scope)
+Record types can be scoped to the logged-in user via `user_scope`:
+
+**`user_scope: "profile"`** — One record per user (preferences, settings, subscription):
 ```
 GET    {base}/me/profile-records/{slug}       → { items: [...], total } (Bearer required)
 POST   {base}/me/profile-records/{slug}       → body: { data: {...} } (Bearer required)
@@ -382,10 +407,22 @@ POST   {base}/me/profile-records/{slug}       → body: { data: {...} } (Bearer 
 ```
 Always use the POST upsert for profile data instead of PATCH.
 
+**`user_scope: "collection"`** — Many records per user (entries, orders, notes):
+```
+GET    {base}/records/{slug}                  → { items: [...], total } (Bearer required — auto-filtered by user)
+POST   {base}/records/{slug}                  → body: { data: {...} } (Bearer required — auto-associates user)
+PATCH  {base}/records/{slug}/{id}             → body: { data: {...} } (Bearer required)
+DELETE {base}/records/{slug}/{id}             (Bearer required)
+```
+
+`is_user_profile: true` (without `user_scope`) is still accepted and treated as `user_scope: "profile"`.
+
 ### Field Types
 - `select` / `multiselect` with `"options": ["A", "B"]` for fixed value sets
 - `reference` / `reference_list` with `"reference_to": "target-slug"` to link records
-- `text`, `textarea`, `richtext`, `number`, `email`, `phone`, `date`, `datetime`, `boolean`, `url`, `asset`, `json`
+- `asset` — project-managed images (uploaded by owner or AI-generated)
+- `file` — user-uploaded content (photos, documents) via the public upload API
+- `text`, `textarea`, `richtext`, `number`, `email`, `phone`, `date`, `datetime`, `boolean`, `url`, `json`
 
 ## Translations (i18n)
 - Use `useTranslations()` hook from `./useTranslations.ts` (template available)

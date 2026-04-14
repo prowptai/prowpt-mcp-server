@@ -64,9 +64,17 @@ async def delete_project(client: ProwptClient, project_id: int) -> str:
     return f"Project {project_id} deleted (HTTP {status_code})"
 
 
-async def clone_project(client: ProwptClient, project_id: int) -> str:
+async def clone_project(client: ProwptClient, project_id: int,
+                        name: str | None = None,
+                        slug: str | None = None) -> str:
     """Clone an existing project."""
-    data = await client.post(f"/api/projects/{project_id}/clone")
+    source = await client.get(f"/api/projects/{project_id}")
+    clone_name = name or f"{source.get('name', 'Project')} — Copy"
+    clone_slug = slug or _slugify(clone_name)
+    data = await client.post(f"/api/projects/{project_id}/clone", json={
+        "name": clone_name,
+        "slug": clone_slug,
+    })
     return json.dumps(data, indent=2, default=str)
 
 

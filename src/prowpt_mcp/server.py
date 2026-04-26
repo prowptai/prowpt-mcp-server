@@ -18,6 +18,7 @@ from mcp.types import Tool, TextContent, Resource
 
 from prowpt_mcp.config import get_api_key, get_api_url
 from prowpt_mcp.client import ProwptClient
+from prowpt_mcp.request_context import get_bearer_token
 from prowpt_mcp.tools import projects, sources, assistant, records, workflows, publishing, billing, assets, translations, email_templates, payments, packages
 
 server = Server("prowpt")
@@ -26,6 +27,17 @@ _client: ProwptClient | None = None
 
 
 def _get_client() -> ProwptClient:
+    """Return a :class:`ProwptClient` for the current request.
+
+    When the HTTP transport is in use, each request carries its own bearer
+    token in a contextvar; we build a per-request client so concurrent callers
+    don't share credentials. For stdio, we fall back to the process-wide
+    ``PROWPT_API_KEY`` and cache a single client.
+    """
+    bearer = get_bearer_token()
+    if bearer:
+        return ProwptClient(get_api_url(), bearer_token=bearer)
+
     global _client
     if _client is None:
         _client = ProwptClient(get_api_url(), get_api_key())
@@ -57,9 +69,9 @@ TOOLS: list[Tool] = [
     Tool(name="restore_source_version", description="Restore project source to a previous version", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "version_id": {"type": "integer"}}, "required": ["project_id", "version_id"]}),
 
     # --- Built-in assistant ---
-    Tool(name="send_prompt", description="Send a natural-language prompt to the Prowpt AI assistant to modify the app (uses Prowpt AI credits). Initial generation may take up to 5 minutes; subsequent updates are faster.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "prompt": {"type": "string", "description": "Natural language instruction (e.g. 'Add a contact form')"}, "auto_accept": {"type": "boolean", "description": "Auto-commit changes", "default": True}}, "required": ["project_id", "prompt"]}),
+    Tool(name="send_prompt", description="Send a natural-language prompt to the Prowpt AI assistant to modify the app (uses Prowpt AI credits). Over stdio (Cursor/Claude Code) this blocks until completion (up to 5 minutes). Over HTTP (Claude.ai/ChatGPT connectors) it returns a run_id immediately; poll get_assistant_status(run_id=...) until status is 'completed' or 'failed'.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "prompt": {"type": "string", "description": "Natural language instruction (e.g. 'Add a contact form')"}, "auto_accept": {"type": "boolean", "description": "Auto-commit changes", "default": True}}, "required": ["project_id", "prompt"]}),
     Tool(name="accept_preview", description="Accept pending AI-generated changes", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "preview_token": {"type": "string"}}, "required": ["project_id", "preview_token"]}),
-    Tool(name="get_assistant_status", description="Check if a generation run is active", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}}, "required": ["project_id"]}),
+    Tool(name="get_assistant_status", description="Check the status of an assistant generation run. If run_id is provided, looks up that specific run (use this after a send_prompt over HTTP). Otherwise returns the latest unacknowledged run for the project.", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}, "run_id": {"type": "string", "description": "Run id returned by send_prompt on the HTTP transport. Omit to fetch the latest active run for the project."}}, "required": ["project_id"]}),
 
     # --- Record types and records ---
     Tool(name="list_record_types", description="List all record types for a project", inputSchema={"type": "object", "properties": {"project_id": {"type": "integer"}}, "required": ["project_id"]}),
@@ -150,7 +162,7 @@ _DISPATCH: dict[str, Any] = {
     # Assistant
     "send_prompt": lambda c, a: assistant.send_prompt(c, a["project_id"], a["prompt"], "code", a.get("auto_accept", True)),
     "accept_preview": lambda c, a: assistant.accept_preview(c, a["project_id"], a["preview_token"]),
-    "get_assistant_status": lambda c, a: assistant.get_assistant_status(c, a["project_id"]),
+    "get_assistant_status": lambda c, a: assistant.get_assistant_status(c, a["project_id"], a.get("run_id")),
     # Records
     "list_record_types": lambda c, a: records.list_record_types(c, a["project_id"]),
     "create_record_type": lambda c, a: records.create_record_type(c, a["project_id"], a["name"], a["slug"], a["fields"], user_scope=a.get("user_scope"), is_user_profile=a.get("is_user_profile", False), description=a.get("description"), display_name_field=a.get("display_name_field"), show_in_backoffice=a.get("show_in_backoffice", True)),
@@ -466,16 +478,72 @@ async def _run_stdio():
         await server.run(read_stream, write_stream, init_options)
 
 
+def _parse_bind(bind: str) -> tuple[str, int]:
+    host, _, port = bind.rpartition(":")
+    if not host or not port:
+        raise SystemExit(f"Invalid --bind value '{bind}'. Expected HOST:PORT.")
+    try:
+        return host, int(port)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid port in --bind '{bind}'") from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description="Prowpt.ai MCP server")
     parser.add_argument("--api-key", help="Prowpt API key (or set PROWPT_API_KEY env)")
     parser.add_argument("--api-url", help="Prowpt API URL (or set PROWPT_API_URL env)")
+    parser.add_argument(
+        "--transport", choices=("stdio", "http"), default="stdio",
+        help="Transport to run (default: stdio). Use 'http' for the remote "
+             "Streamable HTTP transport, e.g. for Claude.ai / ChatGPT connectors.",
+    )
+    parser.add_argument(
+        "--bind", default="0.0.0.0:8001",
+        help="HTTP transport bind address in HOST:PORT form (default: 0.0.0.0:8001)",
+    )
+    parser.add_argument(
+        "--stateless", dest="stateless", action="store_true", default=True,
+        help="Run HTTP transport in stateless mode (default).",
+    )
+    parser.add_argument(
+        "--stateful", dest="stateless", action="store_false",
+        help="Run HTTP transport in stateful (session) mode.",
+    )
+    parser.add_argument(
+        "--json-response", action="store_true",
+        help="HTTP transport: force JSON responses instead of SSE streams.",
+    )
+    parser.add_argument(
+        "--no-auth", action="store_true",
+        help="HTTP transport only: disable bearer-token auth. For local debugging only.",
+    )
+    parser.add_argument(
+        "--log-level", default="info",
+        choices=("critical", "error", "warning", "info", "debug", "trace"),
+        help="HTTP transport log level (default: info).",
+    )
     args = parser.parse_args()
 
     if args.api_key:
         os.environ["PROWPT_API_KEY"] = args.api_key
     if args.api_url:
         os.environ["PROWPT_API_URL"] = args.api_url
+
+    if args.transport == "http":
+        from prowpt_mcp.http_transport import run_http
+
+        host, port = _parse_bind(args.bind)
+        run_http(
+            server,
+            host=host,
+            port=port,
+            api_url=get_api_url(),
+            require_auth=not args.no_auth,
+            stateless=args.stateless,
+            json_response=args.json_response,
+            log_level=args.log_level,
+        )
+        return
 
     import asyncio
     asyncio.run(_run_stdio())

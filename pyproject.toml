@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prowpt-mcp-server"
-version = "0.2.1"
-description = "MCP server for Prowpt.ai — lets AI agents create, edit, and publish web apps"
+version = "0.3.0"
+description = "MCP server for Prowpt.ai — lets AI agents create, edit, and publish web apps. Supports stdio (local) and Streamable HTTP (remote) transports."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -23,6 +23,14 @@ classifiers = [
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+# Remote Streamable HTTP transport (Claude.ai / ChatGPT connectors, etc.).
+# Not required for the default stdio transport used by Cursor / Claude Code.
+http = [
+    "starlette>=0.37.0",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 [project.urls]

@@ -11,11 +11,24 @@ _RETRY_BASE_DELAY = 0.8
 
 
 class ProwptClient:
-    """Thin wrapper around httpx that injects the API key header."""
+    """Thin wrapper around httpx that injects credentials as headers.
 
-    def __init__(self, api_url: str, api_key: str, timeout: float = 120.0):
+    ``api_key`` is sent as ``X-API-Key``. If ``bearer_token`` is provided
+    instead (used by the HTTP transport, where the caller authenticates with
+    an OAuth-issued JWT or an API key passed in ``Authorization: Bearer``),
+    it is forwarded verbatim. Exactly one of ``api_key`` / ``bearer_token``
+    should be set.
+    """
+
+    def __init__(self, api_url: str, api_key: str = "", *,
+                 bearer_token: str = "", timeout: float = 120.0):
         self._base = api_url.rstrip("/")
-        self._headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+        hdrs: dict[str, str] = {"Content-Type": "application/json"}
+        if bearer_token:
+            hdrs["Authorization"] = f"Bearer {bearer_token}"
+        else:
+            hdrs["X-API-Key"] = api_key
+        self._headers = hdrs
         self._timeout = timeout
 
     def _url(self, path: str) -> str:
@@ -84,7 +97,7 @@ class ProwptClient:
         return r.status_code
 
     async def post_form(self, path: str, files: dict, data: dict | None = None) -> Any:
-        hdrs = {"X-API-Key": self._headers["X-API-Key"]}
+        hdrs = {k: v for k, v in self._headers.items() if k != "Content-Type"}
         r = await self._request(
             "POST", path, headers=hdrs, files=files, data=data or {},
         )

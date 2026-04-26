@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prowpt-mcp-server"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server for Prowpt.ai — lets AI agents create, edit, and publish web apps. Supports stdio (local) and Streamable HTTP (remote) transports."
 readme = "README.md"
 requires-python = ">=3.10"

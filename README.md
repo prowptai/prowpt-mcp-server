@@ -44,8 +44,59 @@ prowpt-mcp
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `PROWPT_API_KEY` | Yes | — | Your Prowpt API key |
+| `PROWPT_API_KEY` | Yes (stdio only) | — | Your Prowpt API key |
 | `PROWPT_API_URL` | No | `https://api.prowpt.ai` | API base URL |
+
+## Transports
+
+The server supports two transports:
+
+### stdio (default)
+
+Used by local IDEs like Cursor and Claude Code. The CLI authenticates with the
+`PROWPT_API_KEY` environment variable and speaks MCP over stdin/stdout.
+
+```bash
+prowpt-mcp                    # reads PROWPT_API_KEY from env
+prowpt-mcp --api-key pk_...   # or pass explicitly
+```
+
+### Streamable HTTP (remote)
+
+Used by public connectors (Claude.ai custom servers, ChatGPT Apps, etc.). The
+server listens on an HTTP endpoint at `/mcp`; every request must carry an
+`Authorization: Bearer <token>` header. The token is either a Prowpt API key
+(`pk_live_...`) or — once the Prowpt OAuth AS is live — a JWT issued by
+`https://prowpt.ai/oauth/*`. Tokens are forwarded verbatim to the Prowpt REST
+API, which owns all scope/rate-limit enforcement.
+
+```bash
+pip install "prowpt-mcp-server[http]"
+prowpt-mcp --transport http --bind 0.0.0.0:8001
+```
+
+Useful flags:
+
+| Flag | Description |
+|------|-------------|
+| `--transport http` | Run the HTTP transport (default: `stdio`) |
+| `--bind HOST:PORT` | Listen address (default: `0.0.0.0:8001`) |
+| `--stateful` | Use session-state mode (default: stateless) |
+| `--json-response` | Return plain JSON instead of SSE streams |
+| `--no-auth` | Disable bearer-token auth (**local debugging only**) |
+| `--api-url URL` | Prowpt REST API base URL |
+
+The server also exposes `GET /healthz` for liveness probes. Unauthenticated
+requests return `401` with a `WWW-Authenticate: Bearer` challenge pointing at
+the OAuth protected-resource metadata URL, so MCP clients can auto-discover
+the authorisation server.
+
+OAuth-issued tokens (used by Claude.ai and ChatGPT directory connectors) are
+short-lived JWTs backed by an `api_keys` row with `origin='oauth'`. Each
+connector key carries a default rate limit of **20 requests per minute** and a
+**25-credit per-UTC-day spend cap** for credit-consuming actions
+(`send_prompt`, `/api/generate/*`). Users can revoke any connection from
+*Settings → API Keys* in the Prowpt web app.
 
 ## Getting Started
 
@@ -55,7 +106,7 @@ After installation, the recommended first step for any code-generation task is t
 get_project_context(project_id=123)
 ```
 
-This returns the full conventions, available record types, templates, i18n state, and subscription info for the project — everything the agent needs to write correct, Prowpt-compliant code.
+This returns the full conventions, available record types, templates, i18n state, enabled packages, and subscription info for the project — everything the agent needs to write correct, Prowpt-compliant code.
 
 The server also exposes two static resources that agents can read at any time:
 
@@ -86,9 +137,9 @@ The server also exposes two static resources that agents can read at any time:
 - `restore_source_version` — Restore a version
 
 ### AI Assistant (uses Prowpt credits)
-- `send_prompt` — Send instruction to Prowpt AI
+- `send_prompt` — Send instruction to Prowpt AI. Transport-aware: on **stdio** (Cursor / Claude Code) it blocks up to 5 minutes and returns the final result; on **HTTP** (remote connectors with short tool-call timeouts) it returns `{run_id, status: "queued"}` immediately and the caller polls `get_assistant_status(project_id, run_id=...)` until the run terminates.
 - `accept_preview` — Accept AI changes
-- `get_assistant_status` — Check generation status
+- `get_assistant_status` — Check generation status. Pass `run_id` to poll a specific async run (HTTP flow); omit it to fetch the latest active run for the project (stdio flow).
 
 ### Records & Data
 - `list_record_types` / `create_record_type` / `update_record_type`
@@ -97,6 +148,12 @@ The server also exposes two static resources that agents can read at any time:
 ### Workflows
 - `list_workflows` / `create_workflow` / `update_workflow` / `delete_workflow`
 - `execute_workflow` / `get_workflow_executions`
+
+### Packages / Dependencies
+- `list_catalog` — Browse all available npm packages in the platform catalog
+- `list_project_packages` — List packages enabled for a project (with update info)
+- `add_package` — Enable a catalog package for a project
+- `remove_package` — Remove a package from a project
 
 ### Assets
 - `list_assets` / `upload_asset` / `delete_asset`
